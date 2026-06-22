@@ -53,6 +53,9 @@
   tr.editing{background:#23210f}
   tr.editing td:first-child{box-shadow:inset 3px 0 0 var(--gold)}
   .empty{color:var(--muted);text-align:center;padding:18px 0;font-size:14px}
+  .actions{display:flex;gap:8px;flex-wrap:wrap}
+  .io-msg{font-size:13px;color:var(--gold-soft);min-height:18px;margin:0 0 10px}
+  .io-msg:empty{margin:0}
   .totals{background:linear-gradient(135deg,#1d1a10,#181b22);border-color:#3a3015}
   .total-grid{display:flex;gap:32px;flex-wrap:wrap}
   .total-grid>div{display:flex;flex-direction:column}
@@ -90,8 +93,14 @@
   <section class="card">
     <div class="card-head">
       <h2>Purchases</h2>
-      <button id="clear" class="ghost">Clear all</button>
+      <div class="actions">
+        <button id="import" class="ghost">Import CSV</button>
+        <button id="export" class="ghost">Export CSV</button>
+        <button id="clear" class="ghost">Clear all</button>
+      </div>
     </div>
+    <input type="file" id="file" accept=".csv,text/csv" hidden>
+    <div id="ioMsg" class="io-msg"></div>
     <table>
       <thead><tr><th>Date</th><th>Upd</th><th class="num">&#8377;/g</th><th class="num">Amount &#8377;</th><th class="num">Grams</th><th></th></tr></thead>
       <tbody id="rows"></tbody>
@@ -117,7 +126,7 @@ const RUPEE = "\u20B9";
 const $ = id => document.getElementById(id);
 const dateEl=$("date"), updEl=$("update"), indEl=$("indicator"),
       amtEl=$("amount"), errEl=$("formError"), rowsEl=$("rows"), emptyEl=$("empty"),
-      addBtn=$("add"), cancelBtn=$("cancel");
+      addBtn=$("add"), cancelBtn=$("cancel"), fileEl=$("file"), ioMsgEl=$("ioMsg");
 
 let purchases = load();
 let editIndex = null;
@@ -206,6 +215,65 @@ function clearAll(){
   if(confirm("Remove all purchases?")){ purchases=[]; resetFormMode(); amtEl.value=""; save(); render(); }
 }
 
+function showMsg(m){ ioMsgEl.textContent=m; }
+
+function today(){
+  const d=new Date(), p=n=>String(n).padStart(2,"0");
+  return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate());
+}
+
+function exportCSV(){
+  if(!purchases.length){ showMsg("Nothing to export yet."); return; }
+  const header="date,update_no,amount,rate_per_gram,grams";
+  const lines=purchases.map(p=>[p.date,p.upd,p.amount,p.rate,(p.amount/p.rate).toFixed(3)].join(","));
+  const csv=header+"\n"+lines.join("\n")+"\n";
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
+  a.download="gold-purchases-"+today()+".csv";
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(a.href);
+  showMsg("Exported "+purchases.length+" purchase(s).");
+}
+
+function parseCSV(text){
+  const rows=text.replace(/\r/g,"").split("\n").filter(l=>l.trim().length);
+  if(!rows.length) return {recs:[],skipped:0};
+  const clean=s=>s.trim().replace(/^"|"$/g,"");
+  let start=0, di=0, ui=1, ai=2;
+  const head=rows[0].split(",").map(s=>clean(s).toLowerCase());
+  if(head.includes("date")){
+    start=1; di=head.indexOf("date");
+    ui=head.indexOf("update_no"); if(ui<0) ui=head.indexOf("update");
+    ai=head.indexOf("amount");
+  }
+  const recs=[]; let skipped=0;
+  for(let r=start;r<rows.length;r++){
+    const c=rows[r].split(",").map(clean);
+    const date=c[di], rates=ratesFor(date);
+    const upd=parseInt(c[ui<0?1:ui],10)||1;
+    const amt=parseFloat(c[ai<0?2:ai]);
+    if(!rates || upd<1 || upd>rates.length || !(amt>0)){ skipped++; continue; }
+    recs.push({date, upd, n:rates.length, rate:rates[upd-1], amount:amt});
+  }
+  return {recs, skipped};
+}
+
+function handleFile(file){
+  const reader=new FileReader();
+  reader.onload=()=>{
+    let res;
+    try{ res=parseCSV(String(reader.result)); }
+    catch(e){ showMsg("Could not read that file."); return; }
+    const {recs, skipped}=res;
+    if(!recs.length){ showMsg("No valid rows found"+(skipped?(" ("+skipped+" skipped)"):"")+"."); return; }
+    if(purchases.length && !confirm("Replace current "+purchases.length+" purchase(s) with "+recs.length+" imported?")) return;
+    purchases=recs; resetFormMode(); amtEl.value=""; save(); render();
+    showMsg("Imported "+recs.length+" purchase(s)"+(skipped?(", skipped "+skipped+" invalid"):"")+".");
+  };
+  reader.onerror=()=>showMsg("Could not read that file.");
+  reader.readAsText(file);
+}
+
 function makeCell(text, isNum){
   const td=document.createElement("td");
   if(isNum) td.className="num";
@@ -246,6 +314,9 @@ addBtn.addEventListener("click", submitForm);
 cancelBtn.addEventListener("click", cancelEdit);
 amtEl.addEventListener("keydown", e=>{ if(e.key==="Enter") submitForm(); });
 $("clear").addEventListener("click", clearAll);
+$("export").addEventListener("click", exportCSV);
+$("import").addEventListener("click", ()=>{ fileEl.value=""; fileEl.click(); });
+fileEl.addEventListener("change", ()=>{ if(fileEl.files[0]) handleFile(fileEl.files[0]); });
 rowsEl.addEventListener("click", e=>{
   const del=e.target.closest(".del"); if(del){ removeRow(+del.dataset.del); return; }
   const ed=e.target.closest(".edit"); if(ed){ editRow(+ed.dataset.edit); }

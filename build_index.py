@@ -64,6 +64,10 @@ TEMPLATE = """<!DOCTYPE html>
   tbody tr:last-child td{border-bottom:0}
   .del{background:none;color:var(--muted);border:0;font-size:16px;cursor:pointer;padding:2px 6px}
   .del:hover{color:var(--danger);background:none}
+  .edit{background:none;color:var(--muted);border:0;font-size:15px;cursor:pointer;padding:2px 6px}
+  .edit:hover{color:var(--gold-soft);background:none}
+  tr.editing{background:#23210f}
+  tr.editing td:first-child{box-shadow:inset 3px 0 0 var(--gold)}
   .empty{color:var(--muted);text-align:center;padding:18px 0;font-size:14px}
   .totals{background:linear-gradient(135deg,#1d1a10,#181b22);border-color:#3a3015}
   .total-grid{display:flex;gap:32px;flex-wrap:wrap}
@@ -94,6 +98,7 @@ TEMPLATE = """<!DOCTYPE html>
         <input type="number" id="amount" min="0" step="any" placeholder="e.g. 1000000" inputmode="decimal">
       </label>
       <button id="add">+ Add purchase</button>
+      <button id="cancel" class="ghost" style="display:none">Cancel</button>
     </div>
     <div id="formError" class="error"></div>
   </section>
@@ -127,9 +132,11 @@ const RUPEE = "\\u20B9";
 
 const $ = id => document.getElementById(id);
 const dateEl=$("date"), updEl=$("update"), indEl=$("indicator"),
-      amtEl=$("amount"), errEl=$("formError"), rowsEl=$("rows"), emptyEl=$("empty");
+      amtEl=$("amount"), errEl=$("formError"), rowsEl=$("rows"), emptyEl=$("empty"),
+      addBtn=$("add"), cancelBtn=$("cancel");
 
 let purchases = load();
+let editIndex = null;
 
 function load(){ try{ return JSON.parse(localStorage.getItem(KEY)) || []; }catch(e){ return []; } }
 function save(){ localStorage.setItem(KEY, JSON.stringify(purchases)); }
@@ -162,23 +169,57 @@ function refreshIndicator(){
   indEl.append("24K on ", bDate, " ("+upd+"): ", bRate);
 }
 
-function addPurchase(){
+function resetFormMode(){
+  editIndex=null;
+  addBtn.textContent="+ Add purchase";
+  cancelBtn.style.display="none";
+}
+
+function submitForm(){
   errEl.textContent="";
   const d=dateEl.value, rates=ratesFor(d);
   if(!rates){ errEl.textContent="Pick a valid date within the dataset."; return; }
   const i=+updEl.value||0, rate=rates[i];
   const amt=parseFloat(amtEl.value);
   if(!(amt>0)){ errEl.textContent="Enter an amount greater than 0."; return; }
-  purchases.push({date:d, upd:i+1, n:rates.length, rate, amount:amt});
+  const rec={date:d, upd:i+1, n:rates.length, rate, amount:amt};
+  if(editIndex!==null){ purchases[editIndex]=rec; resetFormMode(); }
+  else { purchases.push(rec); }
   save(); render();
   amtEl.value=""; amtEl.focus();
 }
 
-function removeRow(idx){ purchases.splice(idx,1); save(); render(); }
+function editRow(idx){
+  const p=purchases[idx];
+  dateEl.value=p.date;
+  populateUpdates();
+  updEl.value=String(p.upd-1);
+  refreshIndicator();
+  amtEl.value=p.amount;
+  editIndex=idx;
+  addBtn.textContent="Save changes";
+  cancelBtn.style.display="";
+  render();
+  amtEl.focus();
+  dateEl.closest(".card").scrollIntoView({behavior:"smooth", block:"start"});
+}
+
+function cancelEdit(){
+  resetFormMode(); amtEl.value=""; errEl.textContent=""; render();
+}
+
+function removeRow(idx){
+  purchases.splice(idx,1);
+  if(editIndex!==null){
+    if(editIndex===idx){ resetFormMode(); amtEl.value=""; }
+    else if(editIndex>idx){ editIndex--; }
+  }
+  save(); render();
+}
 
 function clearAll(){
   if(!purchases.length) return;
-  if(confirm("Remove all purchases?")){ purchases=[]; save(); render(); }
+  if(confirm("Remove all purchases?")){ purchases=[]; resetFormMode(); amtEl.value=""; save(); render(); }
 }
 
 function makeCell(text, isNum){
@@ -199,11 +240,15 @@ function render(){
     tr.appendChild(makeCell(fmtINR(p.rate), true));
     tr.appendChild(makeCell(fmtINR(p.amount), true));
     tr.appendChild(makeCell(fmtG(grams), true));
-    const tdDel=document.createElement("td");
-    const btn=document.createElement("button");
-    btn.className="del"; btn.title="Remove"; btn.dataset.i=idx; btn.textContent="\\u2715";
-    tdDel.appendChild(btn);
-    tr.appendChild(tdDel);
+    const tdAct=document.createElement("td");
+    tdAct.style.whiteSpace="nowrap";
+    const editBtn=document.createElement("button");
+    editBtn.className="edit"; editBtn.title="Edit"; editBtn.dataset.edit=idx; editBtn.textContent="\\u270E";
+    const delBtn=document.createElement("button");
+    delBtn.className="del"; delBtn.title="Remove"; delBtn.dataset.del=idx; delBtn.textContent="\\u2715";
+    tdAct.appendChild(editBtn); tdAct.appendChild(delBtn);
+    tr.appendChild(tdAct);
+    if(idx===editIndex) tr.classList.add("editing");
     rowsEl.appendChild(tr);
   });
   emptyEl.style.display = purchases.length ? "none" : "block";
@@ -213,10 +258,14 @@ function render(){
 
 dateEl.addEventListener("change", populateUpdates);
 updEl.addEventListener("change", refreshIndicator);
-$("add").addEventListener("click", addPurchase);
-amtEl.addEventListener("keydown", e=>{ if(e.key==="Enter") addPurchase(); });
+addBtn.addEventListener("click", submitForm);
+cancelBtn.addEventListener("click", cancelEdit);
+amtEl.addEventListener("keydown", e=>{ if(e.key==="Enter") submitForm(); });
 $("clear").addEventListener("click", clearAll);
-rowsEl.addEventListener("click", e=>{ const b=e.target.closest(".del"); if(b) removeRow(+b.dataset.i); });
+rowsEl.addEventListener("click", e=>{
+  const del=e.target.closest(".del"); if(del){ removeRow(+del.dataset.del); return; }
+  const ed=e.target.closest(".edit"); if(ed){ editRow(+ed.dataset.edit); }
+});
 
 populateUpdates();
 render();

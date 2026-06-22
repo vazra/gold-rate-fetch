@@ -56,6 +56,7 @@
   .actions{display:flex;gap:8px;flex-wrap:wrap}
   .io-msg{font-size:13px;color:var(--gold-soft);min-height:18px;margin:0 0 10px}
   .io-msg:empty{margin:0}
+  .note-cell{color:var(--muted);max-width:200px;white-space:normal;word-break:break-word;font-size:13px}
   .totals{background:linear-gradient(135deg,#1d1a10,#181b22);border-color:#3a3015}
   .total-grid{display:flex;gap:32px;flex-wrap:wrap}
   .total-grid>div{display:flex;flex-direction:column}
@@ -84,6 +85,11 @@
       <label>Amount (&#8377;)
         <input type="number" id="amount" min="0" step="any" placeholder="e.g. 1000000" inputmode="decimal">
       </label>
+      <label style="flex:2">Note (optional)
+        <input type="text" id="note" maxlength="200" placeholder="e.g. wedding coins, gift from family">
+      </label>
+    </div>
+    <div class="form-row">
       <button id="add">+ Add purchase</button>
       <button id="cancel" class="ghost" style="display:none">Cancel</button>
     </div>
@@ -102,7 +108,7 @@
     <input type="file" id="file" accept=".csv,text/csv" hidden>
     <div id="ioMsg" class="io-msg"></div>
     <table>
-      <thead><tr><th>Date</th><th>Upd</th><th class="num">&#8377;/g</th><th class="num">Amount &#8377;</th><th class="num">Grams</th><th></th></tr></thead>
+      <thead><tr><th>Date</th><th>Upd</th><th class="num">&#8377;/g</th><th class="num">Amount &#8377;</th><th class="num">Grams</th><th>Note</th><th></th></tr></thead>
       <tbody id="rows"></tbody>
     </table>
     <p id="empty" class="empty">No purchases yet. Add one above.</p>
@@ -126,7 +132,8 @@ const RUPEE = "\u20B9";
 const $ = id => document.getElementById(id);
 const dateEl=$("date"), updEl=$("update"), indEl=$("indicator"),
       amtEl=$("amount"), errEl=$("formError"), rowsEl=$("rows"), emptyEl=$("empty"),
-      addBtn=$("add"), cancelBtn=$("cancel"), fileEl=$("file"), ioMsgEl=$("ioMsg");
+      addBtn=$("add"), cancelBtn=$("cancel"), fileEl=$("file"), ioMsgEl=$("ioMsg"),
+      noteEl=$("note");
 
 let purchases = load();
 let editIndex = null;
@@ -175,11 +182,11 @@ function submitForm(){
   const i=+updEl.value||0, rate=rates[i];
   const amt=parseFloat(amtEl.value);
   if(!(amt>0)){ errEl.textContent="Enter an amount greater than 0."; return; }
-  const rec={date:d, upd:i+1, n:rates.length, rate, amount:amt};
+  const rec={date:d, upd:i+1, n:rates.length, rate, amount:amt, note:noteEl.value.trim()};
   if(editIndex!==null){ purchases[editIndex]=rec; resetFormMode(); }
   else { purchases.push(rec); }
   save(); render();
-  amtEl.value=""; amtEl.focus();
+  amtEl.value=""; noteEl.value=""; amtEl.focus();
 }
 
 function editRow(idx){
@@ -189,6 +196,7 @@ function editRow(idx){
   updEl.value=String(p.upd-1);
   refreshIndicator();
   amtEl.value=p.amount;
+  noteEl.value=p.note||"";
   editIndex=idx;
   addBtn.textContent="Save changes";
   cancelBtn.style.display="";
@@ -198,13 +206,13 @@ function editRow(idx){
 }
 
 function cancelEdit(){
-  resetFormMode(); amtEl.value=""; errEl.textContent=""; render();
+  resetFormMode(); amtEl.value=""; noteEl.value=""; errEl.textContent=""; render();
 }
 
 function removeRow(idx){
   purchases.splice(idx,1);
   if(editIndex!==null){
-    if(editIndex===idx){ resetFormMode(); amtEl.value=""; }
+    if(editIndex===idx){ resetFormMode(); amtEl.value=""; noteEl.value=""; }
     else if(editIndex>idx){ editIndex--; }
   }
   save(); render();
@@ -212,7 +220,7 @@ function removeRow(idx){
 
 function clearAll(){
   if(!purchases.length) return;
-  if(confirm("Remove all purchases?")){ purchases=[]; resetFormMode(); amtEl.value=""; save(); render(); }
+  if(confirm("Remove all purchases?")){ purchases=[]; resetFormMode(); amtEl.value=""; noteEl.value=""; save(); render(); }
 }
 
 function showMsg(m){ ioMsgEl.textContent=m; }
@@ -222,10 +230,15 @@ function today(){
   return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate());
 }
 
+function csvCell(s){
+  s=String(s==null?"":s);
+  return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
+}
+
 function exportCSV(){
   if(!purchases.length){ showMsg("Nothing to export yet."); return; }
-  const header="date,update_no,amount,rate_per_gram,grams";
-  const lines=purchases.map(p=>[p.date,p.upd,p.amount,p.rate,(p.amount/p.rate).toFixed(3)].join(","));
+  const header="date,update_no,amount,rate_per_gram,grams,note";
+  const lines=purchases.map(p=>[p.date,p.upd,p.amount,p.rate,(p.amount/p.rate).toFixed(3),csvCell(p.note||"")].join(","));
   const csv=header+"\n"+lines.join("\n")+"\n";
   const a=document.createElement("a");
   a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
@@ -235,25 +248,41 @@ function exportCSV(){
   showMsg("Exported "+purchases.length+" purchase(s).");
 }
 
+function parseLine(line){
+  const out=[]; let cur="", q=false;
+  for(let i=0;i<line.length;i++){
+    const ch=line[i];
+    if(q){
+      if(ch==='"'){ if(line[i+1]==='"'){ cur+='"'; i++; } else q=false; }
+      else cur+=ch;
+    } else if(ch==='"'){ q=true; }
+    else if(ch===','){ out.push(cur); cur=""; }
+    else cur+=ch;
+  }
+  out.push(cur);
+  return out;
+}
+
 function parseCSV(text){
   const rows=text.replace(/\r/g,"").split("\n").filter(l=>l.trim().length);
   if(!rows.length) return {recs:[],skipped:0};
-  const clean=s=>s.trim().replace(/^"|"$/g,"");
-  let start=0, di=0, ui=1, ai=2;
-  const head=rows[0].split(",").map(s=>clean(s).toLowerCase());
+  let start=0, di=0, ui=1, ai=2, ni=-1;
+  const head=parseLine(rows[0]).map(s=>s.trim().toLowerCase());
   if(head.includes("date")){
     start=1; di=head.indexOf("date");
     ui=head.indexOf("update_no"); if(ui<0) ui=head.indexOf("update");
     ai=head.indexOf("amount");
+    ni=head.indexOf("note"); if(ni<0) ni=head.indexOf("notes");
   }
   const recs=[]; let skipped=0;
   for(let r=start;r<rows.length;r++){
-    const c=rows[r].split(",").map(clean);
-    const date=c[di], rates=ratesFor(date);
-    const upd=parseInt(c[ui<0?1:ui],10)||1;
-    const amt=parseFloat(c[ai<0?2:ai]);
+    const c=parseLine(rows[r]);
+    const date=(c[di]||"").trim(), rates=ratesFor(date);
+    const upd=parseInt((c[ui<0?1:ui]||"").trim(),10)||1;
+    const amt=parseFloat((c[ai<0?2:ai]||"").trim());
     if(!rates || upd<1 || upd>rates.length || !(amt>0)){ skipped++; continue; }
-    recs.push({date, upd, n:rates.length, rate:rates[upd-1], amount:amt});
+    const note=ni>=0 ? (c[ni]||"").trim() : "";
+    recs.push({date, upd, n:rates.length, rate:rates[upd-1], amount:amt, note});
   }
   return {recs, skipped};
 }
@@ -292,6 +321,9 @@ function render(){
     tr.appendChild(makeCell(fmtINR(p.rate), true));
     tr.appendChild(makeCell(fmtINR(p.amount), true));
     tr.appendChild(makeCell(fmtG(grams), true));
+    const noteCell=makeCell(p.note||"", false);
+    noteCell.className="note-cell";
+    tr.appendChild(noteCell);
     const tdAct=document.createElement("td");
     tdAct.style.whiteSpace="nowrap";
     const editBtn=document.createElement("button");

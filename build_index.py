@@ -72,7 +72,9 @@ TEMPLATE = """<!DOCTYPE html>
   .actions{display:flex;gap:8px;flex-wrap:wrap}
   .io-msg{font-size:13px;color:var(--gold-soft);min-height:18px;margin:0 0 10px}
   .io-msg:empty{margin:0}
-  .note-cell{color:var(--muted);max-width:200px;white-space:normal;word-break:break-word;font-size:13px}
+  tr.has-note td{border-bottom:none}
+  .note-row td{padding:0 8px 11px 8px;border-bottom:1px solid var(--line)}
+  .note-text{color:var(--muted);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .totals{background:linear-gradient(135deg,#1d1a10,#181b22);border-color:#3a3015}
   .total-grid{display:flex;gap:32px;flex-wrap:wrap}
   .total-grid>div{display:flex;flex-direction:column}
@@ -124,7 +126,7 @@ TEMPLATE = """<!DOCTYPE html>
     <input type="file" id="file" accept=".csv,text/csv" hidden>
     <div id="ioMsg" class="io-msg"></div>
     <table>
-      <thead><tr><th>Date</th><th>Upd</th><th class="num">&#8377;/g</th><th class="num">Amount &#8377;</th><th class="num">Grams</th><th>Note</th><th></th></tr></thead>
+      <thead><tr><th>Date</th><th>Upd</th><th class="num">&#8377;/g</th><th class="num">Amount &#8377;</th><th class="num">Grams</th><th></th></tr></thead>
       <tbody id="rows"></tbody>
     </table>
     <p id="empty" class="empty">No purchases yet. Add one above.</p>
@@ -337,9 +339,6 @@ function render(){
     tr.appendChild(makeCell(fmtINR(p.rate), true));
     tr.appendChild(makeCell(fmtINR(p.amount), true));
     tr.appendChild(makeCell(fmtG(grams), true));
-    const noteCell=makeCell(p.note||"", false);
-    noteCell.className="note-cell";
-    tr.appendChild(noteCell);
     const tdAct=document.createElement("td");
     tdAct.style.whiteSpace="nowrap";
     const editBtn=document.createElement("button");
@@ -349,7 +348,18 @@ function render(){
     tdAct.appendChild(editBtn); tdAct.appendChild(delBtn);
     tr.appendChild(tdAct);
     if(idx===editIndex) tr.classList.add("editing");
+    const note=(p.note||"").trim();
+    if(note) tr.classList.add("has-note");
     rowsEl.appendChild(tr);
+    if(note){
+      const nr=document.createElement("tr");
+      nr.className="note-row"+(idx===editIndex?" editing":"");
+      const td=document.createElement("td"); td.colSpan=6;
+      const div=document.createElement("div");
+      div.className="note-text"; div.title=note; div.textContent="\\u21B3 "+note;
+      td.appendChild(div); nr.appendChild(td);
+      rowsEl.appendChild(nr);
+    }
   });
   emptyEl.style.display = purchases.length ? "none" : "block";
   $("totalGrams").textContent = fmtG(g);
